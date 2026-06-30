@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-crossterm = "0.29.0"
+hickory-proto = "0.26.1"
 socket2 = "0.6.4"
 tokio = { version = "1.52.3", features = ["full"]}

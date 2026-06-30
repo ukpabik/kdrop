@@ -1,3 +1,8 @@
+use hickory_proto::{
+    op::Message,
+    rr::{RData, RecordType},
+    serialize::binary::BinDecodable,
+};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     io as stdio,
@@ -82,9 +87,12 @@ async fn main() -> stdio::Result<()> {
 
         loop {
             match listener.recv_from(&mut buffer).await {
-                Ok((len, from)) => {
+                Ok((len, _)) => {
                     if len >= 12 {
-                        println!("Received {len:?} bytes from {from:?}")
+                        match Message::from_bytes(&buffer[..len]) {
+                            Ok(msg) => println!("Message found!"),
+                            Err(_) => println!("Unable to parse packet"),
+                        }
                     }
                     // TODO: Parse packet for information.
                 }
