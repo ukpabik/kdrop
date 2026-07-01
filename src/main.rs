@@ -89,15 +89,21 @@ async fn main() -> stdio::Result<()> {
             match listener.recv_from(&mut buffer).await {
                 Ok((len, _)) => {
                     if len >= 12 {
-                        match Message::from_bytes(&buffer[..len]) {
-                            Ok(msg) => {
-                                for answer in msg.answers {
-                                    if answer.name.to_string().contains("_kdrop") {
-                                        println!("THIS IS A KDROP PACKET");
+                        if let Ok(msg) = Message::from_bytes(&buffer[..len]) {
+                            let mut check_records = |records: &[hickory_proto::rr::Record]| {
+                                for record in records {
+                                    let name_str = record.name.to_string();
+                                    if name_str.contains("_kdrop") {
+                                        println!(
+                                            "THIS IS A KDROP PACKET (Name match): {}",
+                                            name_str
+                                        );
                                     }
                                 }
-                            }
-                            Err(_) => println!("Unable to parse packet"),
+                            };
+
+                            check_records(msg.answers.as_slice());
+                            check_records(msg.additionals.as_slice());
                         }
                     }
                     // TODO: Parse packet for information.
