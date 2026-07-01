@@ -139,6 +139,9 @@ async fn main() -> stdio::Result<()> {
 
     raw_socket.set_nonblocking(true)?;
     raw_socket.set_reuse_address(true)?;
+
+    raw_socket.set_multicast_loop_v4(true)?;
+
     #[cfg(not(target_os = "windows"))]
     raw_socket.set_reuse_port(true)?;
 
@@ -151,7 +154,7 @@ async fn main() -> stdio::Result<()> {
 
     send_mdns_query(&socket).await?;
 
-    tokio::spawn(async move {
+    let listener_handle = tokio::spawn(async move {
         let mut buffer = [0u8; 4096];
 
         loop {
@@ -230,5 +233,6 @@ async fn main() -> stdio::Result<()> {
         }
     }
 
+    listener_handle.abort();
     Ok(())
 }
