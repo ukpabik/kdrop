@@ -174,6 +174,11 @@ fn get_local_ip() -> stdio::Result<Ipv4Addr> {
 async fn main() -> stdio::Result<()> {
     let raw_socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     let local_ip = get_local_ip()?;
+
+    #[cfg(target_os = "windows")]
+    let bind_addr = SocketAddr::new(IpAddr::V4(local_ip), MULTICAST_PORT);
+
+    #[cfg(not(target_os = "windows"))]
     let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), MULTICAST_PORT);
 
     raw_socket.set_nonblocking(true)?;
