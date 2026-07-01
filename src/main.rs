@@ -1,20 +1,58 @@
 use hickory_proto::{op::Message, rr::RecordType, serialize::binary::BinDecodable};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
+    collections::HashMap,
+    fmt::{self, Display},
     io as stdio,
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket as StdUdpSocket},
     sync::Arc,
 };
 
-use tokio::io::{self, AsyncBufReadExt, BufReader};
-
 use tokio::net::UdpSocket;
+use tokio::{
+    io::{self, AsyncBufReadExt, BufReader},
+    sync::Mutex,
+};
 
 const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
-const PORT: u16 = 5353;
-const MDNS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(MULTICAST_ADDR), PORT);
+const MULTICAST_PORT: u16 = 5353;
+const MDNS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(MULTICAST_ADDR), MULTICAST_PORT);
 
 const TARGET_QNAME: [&str; 3] = ["_kdrop", "_tcp", "_local"];
+
+#[derive(Clone, Debug)]
+struct DeviceProfile {
+    hostname: String,
+    ip_addr: Option<IpAddr>,
+}
+
+impl Display for DeviceProfile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(addr) = self.ip_addr {
+            write!(f, "Device {}: | IP(v4): {}", self.hostname, addr)
+        } else {
+            write!(f, "Device {}: | IP(v4): {}", self.hostname, "")
+        }
+    }
+}
+impl DeviceProfile {
+    fn new(hostname: String, ip_addr: Option<IpAddr>) -> Self {
+        let mut new_profile = Self {
+            hostname,
+            ip_addr: None,
+        };
+
+        if let Some(addr) = ip_addr {
+            new_profile.set_ip_addr(addr);
+        }
+
+        new_profile
+    }
+
+    fn set_ip_addr(&mut self, ip_addr: IpAddr) {
+        self.ip_addr = Some(ip_addr)
+    }
+}
 
 // TODO: Add better comments? or none at all idk
 fn build_mdns_query() -> Vec<u8> {
@@ -135,7 +173,7 @@ fn get_local_ip() -> stdio::Result<Ipv4Addr> {
 async fn main() -> stdio::Result<()> {
     let raw_socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     let local_ip = get_local_ip()?;
-    let addr = SocketAddr::new(IpAddr::V4(local_ip), PORT);
+    let addr = SocketAddr::new(IpAddr::V4(local_ip), MULTICAST_PORT);
 
     raw_socket.set_nonblocking(true)?;
     raw_socket.set_reuse_address(true)?;
@@ -151,8 +189,14 @@ async fn main() -> stdio::Result<()> {
     socket.join_multicast_v4(MULTICAST_ADDR, local_ip)?;
 
     let listener = socket.clone();
+    let query_sock = socket.clone();
 
     send_mdns_query(&socket).await?;
+
+    let device_profiles: Arc<Mutex<HashMap<String, DeviceProfile>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
+    let listener_profile_ptr = device_profiles.clone();
 
     let listener_handle = tokio::spawn(async move {
         let mut buffer = [0u8; 4096];
@@ -183,12 +227,51 @@ async fn main() -> stdio::Result<()> {
                                         match response.record_type() {
                                             RecordType::PTR => {
                                                 // TODO: Do something with the data?
-                                                println!("DATA: {}", response.data.to_string())
+                                                println!("DATA: {}", response.data.to_string());
+                                                let device_name =
+                                                    String::from(response.data.to_string().trim());
+
+                                                let mut unwrapped_profiles =
+                                                    listener_profile_ptr.lock().await;
+                                                if !unwrapped_profiles.contains_key(&device_name) {
+                                                    unwrapped_profiles.insert(
+                                                        device_name.clone(),
+                                                        DeviceProfile::new(
+                                                            device_name.clone(),
+                                                            None,
+                                                        ),
+                                                    );
+                                                }
                                             }
                                             RecordType::A => {
                                                 // TODO: Do something with the data?
                                                 if let Some(ip_addr) = response.data.ip_addr() {
                                                     println!("IP ADDR: {}", ip_addr);
+                                                    let device_name = String::from(
+                                                        response.name.to_string().trim(),
+                                                    );
+
+                                                    let mut unwrapped_profiles =
+                                                        listener_profile_ptr.lock().await;
+                                                    if !unwrapped_profiles
+                                                        .contains_key(&device_name)
+                                                    {
+                                                        unwrapped_profiles.insert(
+                                                            device_name.clone(),
+                                                            DeviceProfile::new(
+                                                                device_name.clone(),
+                                                                response.data.ip_addr(),
+                                                            ),
+                                                        );
+                                                    } else {
+                                                        let mut unwrapped_profiles =
+                                                            listener_profile_ptr.lock().await;
+                                                        let profile = unwrapped_profiles
+                                                            .get_mut(&device_name)
+                                                            .unwrap();
+
+                                                        profile.set_ip_addr(ip_addr);
+                                                    }
                                                 } else {
                                                     println!("Error parsing ip addr for A record");
                                                 }
@@ -207,21 +290,24 @@ async fn main() -> stdio::Result<()> {
         }
     });
 
+    let query_handle = tokio::spawn(async move {
+        if let Err(e) = send_mdns_query(&query_sock).await {
+            println!("Error sending query: {}", e);
+        }
+    });
+
     println!("Type 's' and press Enter to send mDNS query.");
     println!("Type 'q' and press Enter to quit.");
 
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin).lines();
 
+    //TODO: This should be changed. When sharing a file, view the list of
+    //cached devices, and then perform the file transfer to specified device.
     while let Some(line) = reader.next_line().await? {
         match line.trim() {
             "s" => {
-                println!("Sending mDNS query...");
-                //TODO: This should be changed. When sharing a file, send a query to get newly
-                //cached devices, and then perform the file transfer to specified device.
-                if let Err(e) = send_mdns_query(&socket).await {
-                    println!("Error sending query: {}", e);
-                }
+                println!("{:?}", &device_profiles.lock().await);
             }
             "q" => {
                 println!("Quitting...");
@@ -234,5 +320,6 @@ async fn main() -> stdio::Result<()> {
     }
 
     listener_handle.abort();
+    query_handle.abort();
     Ok(())
 }
