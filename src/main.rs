@@ -18,7 +18,7 @@ const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 const PORT: u16 = 5353;
 const MDNS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(MULTICAST_ADDR), PORT);
 
-const TARGET_QNAME: &[&[u8]] = &[b"_kdrop", b"_tcp", b"_local"];
+const TARGET_QNAME: [&str; 3] = ["_kdrop", "_tcp", "_local"];
 
 fn build_mdns_query() -> Vec<u8> {
     let mut query: Vec<u8> = Vec::new();
@@ -33,7 +33,7 @@ fn build_mdns_query() -> Vec<u8> {
 
     for label in TARGET_QNAME {
         query.push(label.len() as u8);
-        query.extend_from_slice(label);
+        query.extend_from_slice(label.as_bytes());
     }
     query.push(0x00);
 
@@ -46,7 +46,58 @@ fn build_mdns_query() -> Vec<u8> {
 
 fn build_mdns_response(local_ip: Ipv4Addr) -> Vec<u8> {
     // TODO: Build response with identifying information
-    vec![]
+    let mut response: Vec<u8> = Vec::new();
+
+    response.extend_from_slice(&[0x00, 0x00]);
+    response.extend_from_slice(&[0x84, 0x00]);
+    response.extend_from_slice(&[0x00, 0x01]);
+    response.extend_from_slice(&[0x00, 0x00]);
+    response.extend_from_slice(&[0x00, 0x00]);
+    response.extend_from_slice(&[0x00, 0x01]);
+
+    // Answer: PTR resource record
+    for label in TARGET_QNAME {
+        response.push(label.len() as u8);
+        response.extend_from_slice(label.as_bytes());
+    }
+    response.push(0x00);
+
+    response.extend_from_slice(&[0x00, 0x0c]);
+    response.extend_from_slice(&[0x00, 0x01]);
+    response.extend_from_slice(&[0x00, 0x00, 0x11, 0x94]);
+
+    // Add RDATA
+    let mut rdata: Vec<u8> = Vec::new();
+    let device_name = "my_device";
+    let mut combined = Vec::new();
+    combined.push(device_name);
+    combined.extend_from_slice(&TARGET_QNAME.clone());
+    for label in &combined {
+        rdata.push(label.len() as u8);
+        rdata.extend_from_slice(label.as_bytes());
+    }
+    rdata.push(0x00);
+
+    let rdata_length = rdata.len() as u16;
+    response.extend_from_slice(&rdata_length.to_be_bytes());
+    response.extend(rdata);
+
+    // A record: Adds local IP for info
+    for label in &combined {
+        response.push(label.len() as u8);
+        response.extend_from_slice(label.as_bytes());
+    }
+    response.push(0x00);
+
+    response.extend_from_slice(&[0x00, 0x01]);
+    response.extend_from_slice(&[0x00, 0x01]);
+    response.extend_from_slice(&[0x00, 0x00, 0x11, 0x94]);
+
+    response.extend_from_slice(&[0x00, 0x04]);
+    for part in local_ip.octets() {
+        response.push(part);
+    }
+    response
 }
 
 async fn send_mdns_response(socket: &UdpSocket) -> stdio::Result<()> {
@@ -95,6 +146,8 @@ async fn main() -> stdio::Result<()> {
 
     let listener = socket.clone();
 
+    send_mdns_query(&socket).await?;
+
     tokio::spawn(async move {
         let mut buffer = [0u8; 4096];
 
@@ -104,19 +157,44 @@ async fn main() -> stdio::Result<()> {
                     if len >= 12 {
                         match Message::from_bytes(&buffer[..len]) {
                             Ok(msg) => {
-                                // TODO: Send a response for every query
                                 for query in &msg.queries {
                                     if query.name().to_string().contains("_kdrop") {
                                         println!("THIS IS A KDROP PACKET: {}", query.name());
+                                        if let Ok(_) = send_mdns_response(&listener).await {
+                                            // TODO: Do we even need to do anything here?
+                                            println!("Successfully sent response");
+                                        } else {
+                                            println!("Error sending mdns packet");
+                                        }
                                     }
                                 }
 
-                                // TODO: Write a loop for handling answers (caching device information)
+                                // TODO: Maybe, with the answers, we build data objects in some map.
+                                // Think about this?
+                                for response in &msg.answers {
+                                    if response.name.to_string().contains("_kdrop") {
+                                        println!("THIS IS A KDROP PACKET: {}", response.name);
+                                        match response.record_type() {
+                                            RecordType::PTR => {
+                                                // TODO: Do something with the data?
+                                                println!("DATA: {}", response.data.to_string())
+                                            }
+                                            RecordType::A => {
+                                                // TODO: Do something with the data?
+                                                if let Some(ip_addr) = response.data.ip_addr() {
+                                                    println!("IP ADDR: {}", ip_addr);
+                                                } else {
+                                                    println!("Error parsing ip addr for A record");
+                                                }
+                                            }
+                                            _ => (),
+                                        }
+                                    }
+                                }
                             }
                             Err(_) => println!("Unable to parse packet"),
                         }
                     }
-                    // TODO: Parse packet for information.
                 }
                 _ => println!("Error receiving packet"),
             }
