@@ -6,13 +6,14 @@ use std::{
     io as stdio,
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket as StdUdpSocket},
     sync::Arc,
+    time::Duration,
 };
 
-use tokio::net::UdpSocket;
 use tokio::{
     io::{self, AsyncBufReadExt, BufReader},
     sync::Mutex,
 };
+use tokio::{net::UdpSocket, time::sleep};
 
 const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 const MULTICAST_PORT: u16 = 5353;
@@ -291,8 +292,12 @@ async fn main() -> stdio::Result<()> {
     });
 
     let query_handle = tokio::spawn(async move {
-        if let Err(e) = send_mdns_query(&query_sock).await {
-            println!("Error sending query: {}", e);
+        loop {
+            if let Err(e) = send_mdns_query(&query_sock).await {
+                println!("Error sending query: {}", e);
+            }
+
+            sleep(Duration::from_secs(5)).await;
         }
     });
 
@@ -307,7 +312,12 @@ async fn main() -> stdio::Result<()> {
     while let Some(line) = reader.next_line().await? {
         match line.trim() {
             "s" => {
-                println!("{:?}", &device_profiles.lock().await);
+                let profiles = &device_profiles.lock().await;
+                if profiles.is_empty() {
+                    println!("No profiles found");
+                } else {
+                }
+                println!("{:?}", profiles);
             }
             "q" => {
                 println!("Quitting...");
