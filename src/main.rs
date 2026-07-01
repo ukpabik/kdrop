@@ -90,7 +90,13 @@ async fn main() -> stdio::Result<()> {
                 Ok((len, _)) => {
                     if len >= 12 {
                         match Message::from_bytes(&buffer[..len]) {
-                            Ok(msg) => println!("Message found!"),
+                            Ok(msg) => {
+                                for answer in msg.answers {
+                                    if answer.name.to_string().contains("_kdrop") {
+                                        println!("THIS IS A KDROP PACKET");
+                                    }
+                                }
+                            }
                             Err(_) => println!("Unable to parse packet"),
                         }
                     }
