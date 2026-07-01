@@ -174,7 +174,7 @@ fn get_local_ip() -> stdio::Result<Ipv4Addr> {
 async fn main() -> stdio::Result<()> {
     let raw_socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     let local_ip = get_local_ip()?;
-    let addr = SocketAddr::new(IpAddr::V4(local_ip), MULTICAST_PORT);
+    let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), MULTICAST_PORT);
 
     raw_socket.set_nonblocking(true)?;
     raw_socket.set_reuse_address(true)?;
@@ -184,7 +184,7 @@ async fn main() -> stdio::Result<()> {
     #[cfg(not(target_os = "windows"))]
     raw_socket.set_reuse_port(true)?;
 
-    raw_socket.bind(&addr.into())?;
+    raw_socket.bind(&bind_addr.into())?;
     let std_socket: StdUdpSocket = raw_socket.into();
     let socket = Arc::new(UdpSocket::from_std(std_socket)?);
     socket.join_multicast_v4(MULTICAST_ADDR, local_ip)?;
