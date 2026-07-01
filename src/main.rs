@@ -1,8 +1,4 @@
-use hickory_proto::{
-    op::Message,
-    rr::{RData, RecordType},
-    serialize::binary::BinDecodable,
-};
+use hickory_proto::{op::Message, rr::RecordType, serialize::binary::BinDecodable};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     io as stdio,
@@ -20,10 +16,11 @@ const MDNS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(MULTICAST_ADDR), PORT);
 
 const TARGET_QNAME: [&str; 3] = ["_kdrop", "_tcp", "_local"];
 
+// TODO: Add better comments? or none at all idk
 fn build_mdns_query() -> Vec<u8> {
     let mut query: Vec<u8> = Vec::new();
 
-    // mDNS header: [TID, Attribute Bits, # of questions, # of answers, # auth RRs, # additional RRs]
+    // mDNS header
     query.extend_from_slice(&[0x00, 0x00]);
     query.extend_from_slice(&[0x00, 0x00]);
     query.extend_from_slice(&[0x00, 0x01]);
@@ -45,17 +42,17 @@ fn build_mdns_query() -> Vec<u8> {
 }
 
 fn build_mdns_response(local_ip: Ipv4Addr) -> Vec<u8> {
-    // TODO: Build response with identifying information
     let mut response: Vec<u8> = Vec::new();
 
+    // mDNS header
     response.extend_from_slice(&[0x00, 0x00]);
     response.extend_from_slice(&[0x84, 0x00]);
-    response.extend_from_slice(&[0x00, 0x01]);
+    response.extend_from_slice(&[0x00, 0x00]);
+    response.extend_from_slice(&[0x00, 0x02]);
     response.extend_from_slice(&[0x00, 0x00]);
     response.extend_from_slice(&[0x00, 0x00]);
-    response.extend_from_slice(&[0x00, 0x01]);
 
-    // Answer: PTR resource record
+    // PTR Record
     for label in TARGET_QNAME {
         response.push(label.len() as u8);
         response.extend_from_slice(label.as_bytes());
@@ -66,11 +63,19 @@ fn build_mdns_response(local_ip: Ipv4Addr) -> Vec<u8> {
     response.extend_from_slice(&[0x00, 0x01]);
     response.extend_from_slice(&[0x00, 0x00, 0x11, 0x94]);
 
-    // Add RDATA
     let mut rdata: Vec<u8> = Vec::new();
-    let device_name = "my_device";
-    let mut combined = Vec::new();
-    combined.push(device_name);
+
+    let os_hostname = hostname::get()
+        .map(|os_str| os_str.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "unknown-device".to_string());
+
+    let device_name = os_hostname
+        .replace(' ', "-")
+        .replace('.', "-")
+        .to_lowercase();
+
+    let mut combined: Vec<&str> = Vec::new();
+    combined.push(device_name.as_str());
     combined.extend_from_slice(&TARGET_QNAME.clone());
     for label in &combined {
         rdata.push(label.len() as u8);
@@ -82,7 +87,7 @@ fn build_mdns_response(local_ip: Ipv4Addr) -> Vec<u8> {
     response.extend_from_slice(&rdata_length.to_be_bytes());
     response.extend(rdata);
 
-    // A record: Adds local IP for info
+    // A Record
     for label in &combined {
         response.push(label.len() as u8);
         response.extend_from_slice(label.as_bytes());
@@ -90,13 +95,11 @@ fn build_mdns_response(local_ip: Ipv4Addr) -> Vec<u8> {
     response.push(0x00);
 
     response.extend_from_slice(&[0x00, 0x01]);
-    response.extend_from_slice(&[0x00, 0x01]);
-    response.extend_from_slice(&[0x00, 0x00, 0x11, 0x94]);
+    response.extend_from_slice(&[0x80, 0x01]);
+    response.extend_from_slice(&[0x00, 0x00, 0x00, 0x78]);
 
     response.extend_from_slice(&[0x00, 0x04]);
-    for part in local_ip.octets() {
-        response.push(part);
-    }
+    response.extend_from_slice(&local_ip.octets());
     response
 }
 
