@@ -265,8 +265,6 @@ async fn main() -> stdio::Result<()> {
                                                             ),
                                                         );
                                                     } else {
-                                                        let mut unwrapped_profiles =
-                                                            listener_profile_ptr.lock().await;
                                                         let profile = unwrapped_profiles
                                                             .get_mut(&device_name)
                                                             .unwrap();
