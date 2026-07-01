@@ -39,9 +39,22 @@ fn build_mdns_query() -> Vec<u8> {
 
     // QTYPE and QCLASS
     query.extend_from_slice(&[0x00, 0x0c]);
-    query.extend_from_slice(&[0x00, 0x01]);
+    query.extend_from_slice(&[0x80, 0x01]);
 
     query
+}
+
+fn build_mdns_response(local_ip: Ipv4Addr) -> Vec<u8> {
+    // TODO: Build response with identifying information
+    vec![]
+}
+
+async fn send_mdns_response(socket: &UdpSocket) -> stdio::Result<()> {
+    // TODO: Probably make a wrapper struct that stores local ip instead of calling fn everytime
+    let response = build_mdns_response(get_local_ip()?);
+
+    socket.send_to(&response, MDNS_ADDR).await?;
+    Ok(())
 }
 
 async fn send_mdns_query(socket: &UdpSocket) -> stdio::Result<()> {
@@ -89,21 +102,18 @@ async fn main() -> stdio::Result<()> {
             match listener.recv_from(&mut buffer).await {
                 Ok((len, _)) => {
                     if len >= 12 {
-                        if let Ok(msg) = Message::from_bytes(&buffer[..len]) {
-                            let mut check_records = |records: &[hickory_proto::rr::Record]| {
-                                for record in records {
-                                    let name_str = record.name.to_string();
-                                    if name_str.contains("_kdrop") {
-                                        println!(
-                                            "THIS IS A KDROP PACKET (Name match): {}",
-                                            name_str
-                                        );
+                        match Message::from_bytes(&buffer[..len]) {
+                            Ok(msg) => {
+                                // TODO: Send a response for every query
+                                for query in &msg.queries {
+                                    if query.name().to_string().contains("_kdrop") {
+                                        println!("THIS IS A KDROP PACKET: {}", query.name());
                                     }
                                 }
-                            };
 
-                            check_records(msg.answers.as_slice());
-                            check_records(msg.additionals.as_slice());
+                                // TODO: Write a loop for handling answers (caching device information)
+                            }
+                            Err(_) => println!("Unable to parse packet"),
                         }
                     }
                     // TODO: Parse packet for information.
@@ -123,6 +133,8 @@ async fn main() -> stdio::Result<()> {
         match line.trim() {
             "s" => {
                 println!("Sending mDNS query...");
+                //TODO: This should be changed. When sharing a file, send a query to get newly
+                //cached devices, and then perform the file transfer to specified device.
                 if let Err(e) = send_mdns_query(&socket).await {
                     println!("Error sending query: {}", e);
                 }
